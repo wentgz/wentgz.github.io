@@ -1,0 +1,231 @@
++++
+title = "CPU Affinity trong Linux – Tiến trình được chạy trên CPU nào?"
+description = "CPU affinity là gì, Linux dùng affinity mask như thế nào và cách quan sát, thay đổi affinity bằng taskset"
+<<<<<<< HEAD:content/posts/2026-01-09-cpu-affinity-linux.md
+date = 2026-01-09
+=======
+date = 2026-01-10
+>>>>>>> 44ad83d (docs: update the date):content/posts/2026-01-10-cpu-affinity-linux.md
+draft = false
+[taxonomies]
+categories = ["Notes"]
+tags = ["linux", "kernel", "scheduler"]
+[extra]
+lang = "vi"
+toc = false
+comment = false
+copy = true
+outdate_alert = false
+outdate_alert_days = 120
+math = false
+mermaid = false
+featured = false
+reaction = false
++++
+
+Khi có nhiều CPU, Linux scheduler quyết định tác vụ nào sẽ chạy trên CPU nào. Thông thường, scheduler được tự do di chuyển một tác vụ giữa các CPU để cân bằng tải. Nhưng đôi lúc ta muốn giới hạn lựa chọn đó: chẳng hạn chỉ cho một tiến trình chạy trên CPU 2 và 3.
+
+Danh sách CPU mà một tác vụ được phép chạy trên đó gọi là **CPU affinity**. Bài này tìm hiểu affinity mask trong Linux, cách xem và thay đổi nó, cùng mối liên hệ với CPU set và container.
+
+## CPU affinity là gì?
+
+**CPU affinity** có thể hiểu là tập hợp các CPU mà một tác vụ được phép chạy trên đó.
+
+Giả sử máy có 8 CPU logic, được đánh số từ 0 đến 7. Một tác vụ có affinity là `{2, 3}` có thể chạy trên CPU 2 hoặc CPU 3. Scheduler vẫn quyết định chính xác khi nào tác vụ chạy và chọn CPU nào trong tập hợp đó; affinity chỉ giới hạn những CPU hợp lệ.
+
+Có thể hình dung affinity như một danh sách các làn đường mà tác vụ được phép đi vào. Nó không bảo đảm tác vụ sẽ luôn chạy trên một CPU cụ thể, cũng không dành riêng CPU đó cho tác vụ.
+
+> Trong Linux, “CPU” ở đây thường là **CPU logic** mà kernel nhìn thấy. Một CPU logic có thể tương ứng với một luồng phần cứng, chẳng hạn một logical processor trong hệ thống có SMT.
+
+## Affinity mask
+
+Kernel biểu diễn tập CPU được phép chạy bằng một **affinity mask** — một mặt nạ bit, trong đó mỗi bit tương ứng với một CPU.
+
+Ví dụ, nếu CPU 1 và CPU 3 được chọn:
+
+```text
+CPU:   7 6 5 4 3 2 1 0
+Mask:  0 0 0 0 1 0 1 0
+```
+
+Mask này thường được viết ở dạng hexadecimal là `0xa`. Cách biểu diễn này tiện cho kernel và chương trình, nhưng khi thao tác trên terminal, ta thường dùng danh sách CPU như `1,3` hoặc `0-3`.
+
+## Affinity áp dụng cho thread
+
+Trong Linux, affinity được áp dụng theo **thread** (luồng), không phải một cách tuyệt đối cho cả tiến trình.
+
+Một tiến trình có thể gồm nhiều thread. Mỗi thread là một tác vụ mà scheduler quản lý, và mỗi thread có thể có affinity riêng. Khi tạo thread mới, affinity của thread mới thường được kế thừa từ thread tạo ra nó.
+
+Vì thế, khi xem hoặc đặt affinity, cần để ý mình đang thao tác với một thread hay với tất cả thread của tiến trình. Công cụ `taskset` có tùy chọn `-a` để áp dụng cho các tác vụ (threads) gắn với một PID.
+
+## Xem affinity hiện tại
+
+Xem các CPU mà shell hiện tại được phép sử dụng:
+
+```bash
+taskset -pc $$
+```
+
+Ví dụ:
+
+```text
+pid 1234's current affinity list: 0-7
+```
+
+Điều đó nghĩa là tác vụ có thể chạy trên CPU logic từ 0 đến 7.
+
+Muốn kiểm tra một tiến trình đang chạy:
+
+```text
+taskset -pc <PID>
+```
+
+Để xem tất cả thread thuộc tiến trình:
+
+```text
+taskset -apc <PID>
+```
+
+Kernel cũng cung cấp thông tin này trong `/proc`:
+
+```text
+grep -E 'Cpus_allowed|Cpus_allowed_list' /proc/<PID>/status
+```
+
+Có thể thấy kết quả dạng:
+
+```text
+Cpus_allowed:       000000ff
+Cpus_allowed_list:  0-7
+```
+
+`Cpus_allowed_list` thường dễ đọc hơn: nó cho biết các CPU đang có trong tập được phép.
+
+## Thay đổi affinity bằng `taskset`
+
+Có thể chạy một chương trình với affinity được giới hạn ngay từ đầu:
+
+```bash
+taskset -c 2,3 ./my-program
+```
+
+Lệnh trên cho phép chương trình chạy trên CPU 2 hoặc CPU 3.
+
+Có thể giới hạn một chương trình đang chạy bằng PID:
+
+```text
+taskset -pc 2,3 <PID>
+```
+
+Hoặc áp dụng cho tất cả thread của tiến trình:
+
+```text
+taskset -apc 2,3 <PID>
+```
+
+Sau khi thay đổi, kiểm tra lại:
+
+```text
+taskset -pc <PID>
+```
+
+Nếu tác vụ đang chạy trên một CPU không còn nằm trong affinity mask mới, kernel có thể chuyển nó sang một CPU được phép.
+
+## Affinity không phải là “ghim cứng” theo nghĩa độc quyền
+
+Đặt một tác vụ vào CPU 2 không có nghĩa CPU 2 chỉ chạy tác vụ đó. Những tác vụ khác vẫn có thể chạy trên CPU 2 nếu affinity của chúng cho phép.
+
+Tương tự, affinity `{2,3}` không cam kết tác vụ sẽ luôn được chạy ngay khi muốn. Nó chỉ nói với scheduler rằng **nếu tác vụ được chọn để chạy**, thì CPU được chọn phải nằm trong tập `{2,3}`. Thời điểm chạy vẫn do scheduler quyết định.
+
+Do đó, affinity khác với:
+
+- **CPU reservation**: dành trước năng lực CPU cho một workload.
+- **CPU quota**: giới hạn lượng thời gian CPU mà workload được dùng.
+- **CPU isolation**: cấu hình hệ thống để giảm hoặc loại bỏ các tác vụ khác khỏi một CPU.
+
+## Tác dụng và đánh đổi
+
+Giới hạn affinity có thể hữu ích khi cần kiểm soát vị trí chạy của workload. Ví dụ, nó có thể giúp giữ tác vụ gần dữ liệu trong cache, giảm việc di chuyển giữa các CPU hoặc hỗ trợ thử nghiệm hiệu năng có kiểm soát. Kernel cũng có thể lọc CPU được yêu cầu theo các giới hạn khác của hệ thống.
+
+Nhưng giới hạn quá chặt cũng có thể làm giảm hiệu năng:
+
+- Scheduler có ít CPU hơn để cân bằng tải.
+- Nếu các CPU được chọn đang bận, tác vụ phải chờ dù CPU khác đang rảnh.
+- Chuyển động trong cache có thể giảm, nhưng việc cố định tác vụ không tự động làm toàn workload nhanh hơn.
+- Nếu giới hạn cả tiến trình nhiều thread vào một CPU, các thread có thể tranh nhau thời gian trên cùng CPU.
+
+Vì vậy, affinity thường là một công cụ kiểm soát có mục đích cụ thể, không phải thiết lập mặc định nên áp dụng cho mọi chương trình.
+
+## Affinity và cpuset
+
+Affinity của một tác vụ không phải giới hạn duy nhất. **cpuset** (CPU set) trong cgroup có thể giới hạn các CPU mà nhóm tác vụ được phép sử dụng. Kernel kết hợp các giới hạn này: tác vụ chỉ có thể chạy trên CPU vừa được affinity cho phép, vừa nằm trong phạm vi CPU mà cpuset của nó cho phép.
+
+Có thể hiểu đơn giản:
+
+```text
+CPU được phép chạy
+    = affinity của tác vụ
+      giao với CPU được cpuset cho phép
+      giao với CPU đang khả dụng
+```
+
+Trong cgroup v2, `cpuset.cpus` dùng để cấu hình CPU cho cgroup; `cpuset.cpus.effective` cho biết các CPU thực tế có hiệu lực sau khi xét giới hạn từ cấp cha và trạng thái hệ thống.
+
+## CPU affinity trong container và Kubernetes
+
+Container không có một bộ CPU vật lý riêng. Các tiến trình trong container vẫn được scheduler của kernel host lập lịch. Tuy nhiên, runtime có thể dùng cgroup để giới hạn CPU mà container được phép chạy trên đó.
+
+Docker có tùy chọn `--cpuset-cpus`, ví dụ:
+
+```bash
+docker run --cpuset-cpus="2,3" image
+```
+
+Tùy chọn này giới hạn container vào CPU 2 và 3 thông qua cơ chế CPU set của Linux.
+
+Trong Kubernetes, việc container có thể chạy trên CPU nào chịu ảnh hưởng của cấu hình tài nguyên và CPU Manager trên node. Với CPU Manager policy `static`, kubelet có thể cấp các CPU riêng cho container trong Pod đủ điều kiện, thường gắn với request CPU là số nguyên và QoS class `Guaranteed`. Đây là cấu hình ở cấp node và cần được bật phù hợp; chỉ khai báo CPU request trong Pod không đồng nghĩa lúc nào cũng được ghim vào một tập CPU riêng.
+
+## Thực hành nhanh
+
+Nếu muốn quan sát affinity mà không cần cài thêm công cụ đặc biệt:
+
+```bash
+# Xem các CPU mà shell hiện tại được phép sử dụng
+taskset -pc $$
+
+# Chạy lệnh trên CPU 0 và 1
+taskset -c 0,1 sh -c 'grep Cpus_allowed_list /proc/self/status'
+
+# Xem affinity của một tiến trình
+taskset -pc 1234
+
+# Xem affinity của mọi thread trong tiến trình
+taskset -apc 1234
+```
+
+Kết quả của lệnh thứ hai thường hiện danh sách CPU đã giới hạn, chẳng hạn:
+
+```text
+Cpus_allowed_list: 0-1
+```
+
+Nếu lệnh `taskset` báo CPU không hợp lệ hoặc không thể đặt affinity, hãy kiểm tra CPU hiện có và giới hạn cpuset của môi trường:
+
+```bash
+lscpu
+grep Cpus_allowed_list /proc/self/status
+```
+
+## Kết luận
+
+CPU affinity là tập CPU mà một thread được phép chạy trên đó. Scheduler vẫn quyết định thời điểm chạy và CPU cụ thể trong tập hợp hợp lệ; affinity không dành riêng CPU và cũng không bảo đảm hiệu năng cao hơn.
+
+Có thể dùng `taskset` để quan sát, giới hạn affinity cho một lệnh hoặc thay đổi affinity của tiến trình đang chạy. Trong môi trường container, cgroup cpuset có thể tiếp tục giới hạn tập CPU đó. Hiểu rõ hai lớp này giúp ta phân biệt việc “được phép chạy trên CPU nào” với “được cấp bao nhiêu CPU”.
+
+## Tham khảo
+
+- [`sched_setaffinity(2)` – Linux manual page](https://man7.org/linux/man-pages/man2/sched_setaffinity.2.html)
+- [`taskset(1)` – Linux manual page](https://man7.org/linux/man-pages/man1/taskset.1.html)
+- [Control Group v2 – Linux kernel documentation](https://docs.kernel.org/admin-guide/cgroup-v2.html)
+- [NUMA Memory Policy – Linux kernel documentation](https://docs.kernel.org/admin-guide/mm/numa_memory_policy.html)
+- [CPU Manager Policies – Kubernetes documentation](https://kubernetes.io/docs/tasks/administer-cluster/cpu-management-policies/)
